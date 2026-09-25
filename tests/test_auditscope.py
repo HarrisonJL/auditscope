@@ -128,6 +128,49 @@ def test_attest_ignores_pure_whitespace_differences(direct_vm, direct_deploy, di
     assert scope.get_attestation(0)["verdict"] == "MATCH"
 
 
+# A self-audit before submission found this: the first version of
+# _normalize stripped leading whitespace too, so a line dedented out of
+# its block - a real, semantically significant code change in Python -
+# hashed identically to the original and reported a false MATCH. Fixed
+# by only stripping trailing whitespace and dropping fully-blank lines.
+def test_attest_mismatch_when_indentation_changes_a_line_block(direct_vm, direct_deploy, direct_owner):
+    scope = _deploy(direct_vm, direct_deploy, direct_owner)
+    _register(scope, direct_vm)
+    _mock_claim_llm(direct_vm, "audited as of commit a1b2c3d")
+    _mock_page(direct_vm, AUDITED_URL, "def withdraw(self, amount):\n    assert amount <= self.balance\n    self.balance -= amount\n")
+    # Same three lines, same characters per line once stripped of leading
+    # whitespace - but the assert has been dedented out of the function,
+    # a real behavior change (it would now run unconditionally at import
+    # time, not as part of withdraw). The old _normalize would have
+    # hashed this identically to the audited version.
+    _mock_page(direct_vm, DEPLOYED_URL, "def withdraw(self, amount):\nassert amount <= self.balance\n    self.balance -= amount\n")
+    scope.attest("T1")
+
+    assert scope.get_attestation(0)["verdict"] == "MISMATCH"
+
+
+# A self-audit before submission found this: _fetch_and_hash truncated
+# to MAX_PAGE_CHARS (6000) before hashing, using the same small cap
+# meant for keeping LLM prompts short. For any real file longer than
+# that, a change placed after the cutoff was invisible - both sides
+# would hash the same truncated prefix and report MATCH regardless of
+# what changed beyond it. Fixed by giving source hashing its own, much
+# larger cap (MAX_SOURCE_CHARS) separate from the report's LLM-prompt
+# cap (MAX_REPORT_CHARS).
+def test_attest_mismatch_from_a_difference_beyond_the_old_truncation_point(direct_vm, direct_deploy, direct_owner):
+    scope = _deploy(direct_vm, direct_deploy, direct_owner)
+    _register(scope, direct_vm)
+    _mock_claim_llm(direct_vm, "audited as of commit a1b2c3d")
+    padding = "x = 1\n" * 2000  # ~12,000 chars - past the old 6000-char cap
+    audited = padding + "assert owner_only()\n"
+    deployed = padding + "pass  # owner check removed\n"  # differs only after the old cutoff
+    _mock_page(direct_vm, AUDITED_URL, audited)
+    _mock_page(direct_vm, DEPLOYED_URL, deployed)
+    scope.attest("T1")
+
+    assert scope.get_attestation(0)["verdict"] == "MISMATCH"
+
+
 def test_attest_ungrounded_when_report_has_no_clear_reference(direct_vm, direct_deploy, direct_owner):
     scope = _deploy(direct_vm, direct_deploy, direct_owner)
     _register(scope, direct_vm, report_body="This document describes our review process in general terms.")
@@ -243,6 +286,6 @@ def test_validator_agrees_when_leader_and_validator_both_find_no_claim(direct_vm
 
 def _sha256_normalized(text: str) -> str:
     import hashlib
-    lines = [line.strip() for line in text.splitlines()]
-    normalized = "\n".join(line for line in lines if line)
+    lines = [line.rstrip() for line in text.splitlines()]
+    normalized = "\n".join(line for line in lines if line.strip())
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()

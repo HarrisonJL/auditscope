@@ -11,7 +11,18 @@ import hashlib
 import json
 
 MAX_URL_LEN = 300
-MAX_PAGE_CHARS = 6000
+# Separate caps for two genuinely different jobs. MAX_REPORT_CHARS bounds
+# what gets fed into an LLM prompt (a real cost/context concern). Source
+# hashing has no such concern - it's plain hashing, not a prompt - so
+# MAX_SOURCE_CHARS is generously large: a self-audit caught that reusing
+# one small cap for both meant truncating source *before* hashing it,
+# which silently turned "compare the whole file" into "compare only the
+# first few KB," letting a real change past the cutoff go undetected
+# while still reporting MATCH. Still bounded, for gas/memory sanity on a
+# pathological input, just at a size no realistic single-file contract
+# should ever hit.
+MAX_REPORT_CHARS = 6000
+MAX_SOURCE_CHARS = 200000
 MAX_TARGET_ID_LEN = 32
 MAX_NAME_LEN = 100
 
@@ -20,16 +31,23 @@ def _now() -> datetime.datetime:
     return datetime.datetime.fromisoformat(gl.message_raw['datetime'])
 
 
-# Whitespace-only normalization, deliberately not comment-stripping - see
-# README's "Known limitations": a comment-only edit reads as a MISMATCH
-# here, the conservative direction for a security tool to err in.
+# Strips trailing whitespace and drops blank lines - never leading
+# whitespace. A self-audit caught that stripping leading whitespace too
+# collapses indentation, and in Python indentation is semantically
+# significant: a line dedented out of a function or conditional is a
+# real code change, not a formatting difference. The earlier version of
+# this function hashed such a change as an identical MATCH - exactly
+# backwards for a tool whose entire purpose is catching real changes.
+# Comment-only or reformatting-only edits (differing only in trailing
+# whitespace or blank lines) still read as MISMATCH here, which remains
+# the deliberate, conservative direction to err in - see README.
 def _normalize(text: str) -> str:
-    lines = [line.strip() for line in text.splitlines()]
-    return "\n".join(line for line in lines if line)
+    lines = [line.rstrip() for line in text.splitlines()]
+    return "\n".join(line for line in lines if line.strip())
 
 
 def _fetch_and_hash(url: str) -> str:
-    text = gl.nondet.web.render(url, mode="text")[:MAX_PAGE_CHARS]
+    text = gl.nondet.web.render(url, mode="text")[:MAX_SOURCE_CHARS]
     return hashlib.sha256(_normalize(text).encode("utf-8")).hexdigest()
 
 
@@ -142,7 +160,7 @@ class AuditScope(gl.Contract):
         deployed_url = target.deployed_source_url
 
         def leader_fn() -> str:
-            report_text = gl.nondet.web.render(report_url, mode="text")[:MAX_PAGE_CHARS]
+            report_text = gl.nondet.web.render(report_url, mode="text")[:MAX_REPORT_CHARS]
             claim = _extract_claim(report_text)
             audited_hash = _fetch_and_hash(audited_url)
             deployed_hash = _fetch_and_hash(deployed_url)
@@ -156,7 +174,7 @@ class AuditScope(gl.Contract):
             except (ValueError, TypeError):
                 return False
 
-            my_report_text = gl.nondet.web.render(report_url, mode="text")[:MAX_PAGE_CHARS]
+            my_report_text = gl.nondet.web.render(report_url, mode="text")[:MAX_REPORT_CHARS]
             leader_claim = leader_data.get("claim")
             if leader_claim is not None:
                 if not isinstance(leader_claim, str) or leader_claim not in my_report_text:
