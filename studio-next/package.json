@@ -1,0 +1,17 @@
+{
+  "name": "auditscope-studio-next",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Deployment tooling for AuditScope on GenLayer Studio Next (chain 61997). Pinned to genlayer-js v2 (unreleased) - see sibling solvency-oracle/quotekeeper repos' studio-next/README.md for why.",
+  "type": "commonjs",
+  "scripts": {
+    "check-schema": "tsx check_schema.ts",
+    "deploy": "tsx deploy.ts"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.3",
+    "genlayer-js": "^2.0.0-rc.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
