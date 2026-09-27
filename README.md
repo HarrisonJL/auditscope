@@ -1,6 +1,6 @@
 # AuditScope
 
-A reusable audit-coverage attestor for [GenLayer](https://genlayer.com): register a deployed contract's audit report alongside its audited and currently-deployed source, and any wallet can trigger a real validator committee to independently verify whether the audit report's claims are genuinely grounded in its own text and whether what was actually audited still matches what's actually deployed - `MATCH` / `MISMATCH`, not a badge nobody re-checks.
+A reusable audit-coverage attestor for [GenLayer](https://genlayer.com): register a deployed contract's audit report alongside its audited and currently-deployed source, and any wallet can trigger a real validator committee to independently verify whether the audit report's claims are genuinely grounded in its own text, whether that reference actually identifies the specific source being compared, and whether what was actually audited still matches what's actually deployed - `MATCH` / `MISMATCH` / `UNVERIFIED`, not a badge nobody re-checks.
 
 **Live on GenLayer Studio Next. Testnet only.** (Also live, separately, on Bradbury - see [`CONTRACT.md`](CONTRACT.md).)
 
@@ -12,26 +12,34 @@ An audit badge gets treated as a permanent safety certificate, but an audit is a
 
 `register_target(target_id, name, audit_report_url, audited_source_url, deployed_source_url)` - permissionless, and once registered, immutable. All three URLs are provided directly by the registrant - this contract doesn't try to parse a repo URL and commit hash out of the report to go fetch files itself, which would mean constructing URLs from LLM-extracted parts and trusting that construction was right. Point `audited_source_url` at the code as it was when reviewed, and `deployed_source_url` at what's actually live now (in principle, an explorer's verified-source page); the contract just compares them.
 
-`attest(target_id)` - permissionless, runs two independent checks:
+`attest(target_id)` - permissionless, runs three independent checks:
 
 ```python
 def leader_fn() -> str:
     report_text = gl.nondet.web.render(report_url, mode="text")[:MAX_REPORT_CHARS]
-    claim = _extract_claim(report_text)                 # LLM proposes a verbatim-quoted pointer
-    audited_hash = _fetch_and_hash(audited_url)          # deterministic - no LLM, truncated only at MAX_SOURCE_CHARS
-    deployed_hash = _fetch_and_hash(deployed_url)        # deterministic - no LLM, truncated only at MAX_SOURCE_CHARS
-    return json.dumps({"claim": claim, "audited_hash": audited_hash, "deployed_hash": deployed_hash})
+    claim = _extract_claim(report_text)                  # LLM proposes a bare token (commit/tag/version)
+    audited_text = _fetch_source(audited_url)             # deterministic fetch, truncated only at MAX_SOURCE_CHARS
+    deployed_text = _fetch_source(deployed_url)
+    audited_hash = _hash_normalized(audited_text)
+    deployed_hash = _hash_normalized(deployed_text)
+    reference_verified = _reference_verified(claim, audited_url, audited_text)  # is the token actually IN this source?
+    return json.dumps({"claim": claim, "audited_hash": audited_hash, "deployed_hash": deployed_hash, "reference_verified": reference_verified})
 
 def validator_fn(leaders_res) -> bool:
     my_report_text = gl.nondet.web.render(report_url, mode="text")[:MAX_REPORT_CHARS]
     if leader_claim is not None and leader_claim not in my_report_text:
         return False                                     # fabricated - not actually in the report
-    return leader_data["audited_hash"] == my_audited_hash and leader_data["deployed_hash"] == my_deployed_hash
+    my_reference_verified = _reference_verified(leader_claim, audited_url, my_audited_text)
+    return (
+        leader_data["audited_hash"] == my_audited_hash
+        and leader_data["deployed_hash"] == my_deployed_hash
+        and leader_data["reference_verified"] == my_reference_verified
+    )
 ```
 
 `MAX_REPORT_CHARS` (6000) bounds what goes into the LLM prompt; `MAX_SOURCE_CHARS` (200000) separately bounds what gets hashed - see "Two different truncation caps" below for why reusing one small cap for both was a real bug, not just tidiness.
 
-The stored verdict - `MATCH` if the audited and deployed source hash identically (after normalization), `MISMATCH` otherwise - is computed deterministically from the agreed-upon hashes, the same one-source-of-truth pattern as SolvencyOracle's `_compute_verdict` and QuoteKeeper's `_local_verdict`. `grounded` records separately whether the audit report actually contained a specific, verbatim-checkable reference (a commit hash, date, or similar) - useful evidence, but independent of whether the source itself matches.
+The stored verdict is computed deterministically from the agreed-upon hashes and reference check, the same one-source-of-truth pattern as SolvencyOracle's `_compute_verdict` and QuoteKeeper's `_local_verdict`: `MISMATCH` if the audited and deployed source don't hash identically (after normalization); `UNVERIFIED` if they do but the report's reference is missing or doesn't identify this specific source; `MATCH` only if both hold. `grounded` records separately whether the audit report actually contained a specific, verbatim-checkable reference at all - a prerequisite for `reference_verified`, but not the same thing (see "Design notes" for why a grounded-but-unrelated reference still fails closed).
 
 ## Design notes
 
@@ -43,7 +51,9 @@ The stored verdict - `MATCH` if the audited and deployed source hash identically
 
 **Two different truncation caps, because they bound two genuinely different things.** `MAX_REPORT_CHARS` (6000) bounds what gets fed into the LLM prompt - a real cost/context concern. `MAX_SOURCE_CHARS` (200000) separately bounds what gets hashed - plain hashing has no such concern, so this cap is generously large, bounded only for gas/memory sanity on a pathological input. These used to be the same small constant. The same pre-submission self-audit that found the indentation bug also caught that reusing one small cap for both meant source got truncated *before* hashing - for any real file longer than 6000 characters, a change placed after that cutoff was invisible to the comparison, silently turning "compare the whole file" into "compare only the first few KB" while still reporting `MATCH`. `tests/test_auditscope.py::test_attest_mismatch_from_a_difference_beyond_the_old_truncation_point` is the regression test.
 
-**`claimed_reference` is supplementary evidence, not a consensus gate on its own.** An attestation can still reach a `MATCH`/`MISMATCH` verdict even when no clear reference was groundable in the report (both leader and validator agreeing "nothing specific found" is itself a valid, if weaker, outcome) - the source-hash comparison is the core claim this contract makes; the grounded reference is corroborating context for a human reading the attestation, not something that blocks the coverage check.
+**`reference_verified`: a grounded reference is only trustworthy if it identifies the right source.** A GenLayer steward review found the gap this closes. The original version of this contract treated `claimed_reference` as supplementary evidence only: an attestation could reach `MATCH` even when no clear reference was groundable in the report, on the reasoning that the source-hash comparison alone was the core claim. That reasoning had a real hole - being grounded only proves the reference is genuinely *in the report*, never that the report is *about this source*. A real, well-formed audit report for a completely different contract, with its own real, verbatim-checkable commit reference, would still produce `MATCH` as long as `audited_source_url` and `deployed_source_url` happened to hash identically to each other; nothing tied the report to the specific pages being compared at all. `reference_verified` closes this: the claimed token must also be found in the audited source's own URL or fetched content, independently re-confirmed by every validator. A hash match alone is now `UNVERIFIED`, not `MATCH` - see `tests/test_auditscope.py::test_attest_unverified_when_reference_not_found_in_audited_source` and the live UNVERIFIED1 proof in CONTRACT.md, where a genuinely grounded reference to an unrelated contract correctly fails closed.
+
+**Extracting a bare token, not a descriptive phrase, is what makes `reference_verified` satisfiable at all.** The original extraction prompt asked for "a short, exact identifying phrase," which in practice meant the LLM returned whole sentences like `"audited as of commit \`e4f1a9c\`, reviewed and finalized on 2026-02-10"`. A sentence like that would almost never appear verbatim inside a source file or its URL - real pages tend to contain the bare commit hash alone, if anything. The prompt now asks specifically for the atomic token (a commit hash, tag, version, or digest, with any surrounding prose stripped), which is what a commit-pinned URL or a version string in the file itself can actually match against.
 
 **Immutable registration**, same reasoning as every other attestor in this account's work: a target's URLs never change after registration, so a historical attestation's context can't be quietly altered out from under it.
 
@@ -64,14 +74,15 @@ CONTRACT.md.
 
 ## Testing
 
-`tests/test_auditscope.py` (18 tests) and `tests/test_listing_gate.py` (3 tests),
+`tests/test_auditscope.py` (17 tests) and `tests/test_listing_gate.py` (3 tests),
 `genlayer-test` Direct Mode:
 
 1. **Registration** - input validation, immutability.
-2. **Integration** (real `attest()` calls, both web fetches and the LLM extraction mocked) - `MATCH`/`MISMATCH` verdicts, trailing-whitespace/blank-line differences correctly ignored, ungrounded-claim bookkeeping, `latest_verdict`/`is_covered`.
-3. **Consensus-boundary tests** via `direct_vm.run_validator(leader_result=...)` - the actual point of this contract: a fabricated claim not present in an independently-fetched report is rejected; a claimed source hash that doesn't match an independent fetch is rejected; leader and validator both finding no groundable claim is a valid agreement.
-4. **Self-audit regressions** - an indentation change that dedents a line out of its block is correctly caught as `MISMATCH` (not masked by over-eager whitespace stripping); a change placed beyond the old 6000-character truncation point is correctly caught as `MISMATCH` (not hidden by truncating source before hashing it). Both were confirmed to genuinely fail against the pre-fix code before being confirmed to pass against the fix - see "Design notes."
-5. `test_listing_gate.py` covers everything `request_listing()`'s untestable cross-contract call doesn't touch, and documents, with a passing test, exactly why that call can't run in Direct Mode.
+2. **Integration** (real `attest()` calls, both web fetches and the LLM extraction mocked) - `MATCH`/`MISMATCH`/`UNVERIFIED` verdicts, trailing-whitespace/blank-line differences correctly ignored, ungrounded-claim bookkeeping, `latest_verdict`/`is_covered`.
+3. **Consensus-boundary tests** via `direct_vm.run_validator(leader_result=...)` - the actual point of this contract: a fabricated claim not present in an independently-fetched report is rejected; a claimed source hash that doesn't match an independent fetch is rejected; a leader dishonestly claiming `reference_verified=True` when an honest validator's own check finds the token isn't in the source is rejected; leader and validator both finding no groundable claim is a valid agreement.
+4. **Self-audit regressions** - an indentation change that dedents a line out of its block is correctly caught as `MISMATCH` (not masked by over-eager whitespace stripping); a change placed beyond the old 6000-character truncation point is correctly caught as `MISMATCH` (not hidden by truncating source before hashing it).
+5. **Steward-review regression** - `test_attest_unverified_when_reference_not_found_in_audited_source`: a genuinely grounded reference that doesn't identify the audited source correctly reaches `UNVERIFIED`, never `MATCH`, even when the source hashes match. Verified the rigorous way for all of these: a standalone check reproduced the actual old-code behavior first (confirming each bug was real, not hypothetical) before the fix was confirmed to resolve it.
+6. `test_listing_gate.py` covers everything `request_listing()`'s untestable cross-contract call doesn't touch, and documents, with a passing test, exactly why that call can't run in Direct Mode.
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
@@ -86,8 +97,9 @@ python -m pytest tests/ -v
 See [`CONTRACT.md`](CONTRACT.md) for live addresses, deploy transactions, and a real
 end-to-end run: a `MATCH` attestation, a `MISMATCH` attestation (a demo vault whose owner
 check was quietly removed after audit - exactly the kind of gap this contract exists to
-catch), and `ListingGate` granting and reflecting a real listing decision against the
-live `is_covered` result.
+catch), an `UNVERIFIED` attestation (a genuinely grounded reference to a completely
+unrelated contract - the exact gap a steward review found), and `ListingGate` granting and
+reflecting a real listing decision against the live `is_covered` result.
 
 ## Known limitations
 
@@ -98,3 +110,4 @@ live `is_covered` result.
 - **Source hashed up to 200,000 characters (`MAX_SOURCE_CHARS`)** - generous enough for any realistic single-file contract, but still a hard cap; a source file larger than that would have anything past the cutoff go uncompared. See "Design notes" for why this is a separate, much larger cap than the one bounding the LLM prompt.
 - **No spam/cost control on `attest()`** beyond the URL-length caps - a production deployment serving untrusted callers would likely want a small fee, mirroring the fee mechanisms already used elsewhere in this account's contracts.
 - **`ListingGate` doesn't auto-revoke** when AuditScope's verdict later changes to `MISMATCH` - `revoke_listing` exists but has to be called explicitly; a v2 would want this triggered automatically whenever AuditScope records a new attestation for a listed target.
+- **`reference_verified` is a plain substring check**, not a cryptographic proof that the audited source page is genuinely the artifact at that commit/version - a sufficiently short or generic token could coincidentally appear in an unrelated page's URL or content. This is the same category of trust boundary as the rest of the contract's model (a human vouches for which URLs are registered; the contract checks consistency between what's registered, not real-world authenticity of arbitrary pages) - see "URLs are provided directly" above.
