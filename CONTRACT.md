@@ -6,7 +6,31 @@
 - **Deployer:** `0x5cdb5699bc1038e115A973bb91A646f7E98C075b`
 - **Contract source:** [`contracts/auditscope_studio_next.py`](contracts/auditscope_studio_next.py) - functionally identical to [`contracts/auditscope.py`](contracts/auditscope.py); only GenVM import/decorator conventions differ. Ported using the mechanical process already proven on SolvencyOracle and QuoteKeeper - both contracts (this one and `listing_gate.py`) passed their live schema check on the first try, including the `gl.get_contract_at` -> `gl.contract.get_at` fix QuoteKeeper's port already found.
 
-*(This is the second redeployment. A pre-submission self-audit found and fixed two correctness bugs (see "Self-audit (first pass)" below); a subsequent GenLayer steward review then found a third, more fundamental gap - see "Steward review: MATCH never actually verified the reference against the source" immediately below. The address above is the fully corrected contract; both earlier deployments are retired.)*
+*(This is the second redeployment. A pre-submission self-audit found and fixed two correctness bugs (see "Self-audit (first pass)" below); a subsequent GenLayer steward review then found a third, more fundamental gap - see "Steward review: MATCH never actually verified the reference against the source" below. The address above is the fully corrected contract; every earlier deployment is retired - listed in the table below.)*
+
+## Verify the deployed source matches this repo
+
+**`0x3B3c8317f24e394A24520D5f382E95bdb6f2be40` is the deployment to review.** Its on-chain code - fetched from the chain itself with `gen_getContractCode`, not from this repo - is byte-identical to [`contracts/auditscope_studio_next.py`](contracts/auditscope_studio_next.py), the corrected source containing `_reference_verified` and the `UNVERIFIED` fail-closed verdict:
+
+| Deployment | Network | SHA-256 of the code on-chain | Same as this repo's source? | Fail-closed reference check? |
+|---|---|---|---|---|
+| [`0x3B3c8317f24e394A24520D5f382E95bdb6f2be40`](https://explorer-studio-dev.genlayer.com/address/0x3B3c8317f24e394A24520D5f382E95bdb6f2be40) | Studio Next | `6ed4ce0f0b362a8ce08a61fd4002b44faf2eba21a5650917551809f177f00e1a` | **Yes - byte-identical** | **Yes** |
+| `0xe7fc2ed2c909A2f3C22662C62bCd895724F38504` | Studio Next | `79b4e900db941f89f8279cffb402db93692708fd21b30a41697fcd5ebea417e7` | No - pre-fix source, superseded | No |
+| `0x102fb8495D68c68317422A62519365b1687A15dc` | Studio Next | `1a38f43231556dc254b5ba0a145d23df22daff73868ca7e3cef2100cd66f58f3` | No - pre-fix source, superseded | No |
+| `0xF612bf82192762adc4631c888F7639d9e728079E` | Bradbury | `244e016d9c6fc2757e1574d68c6ebaea09198effdc1a963498d0969c891cbc2a` | No - pre-fix source, superseded | No |
+
+Reproduce it:
+
+```bash
+cd studio-next && npm ci && npx tsx verify_code.ts
+# 0x3B3c8317f24e394A24520D5f382E95bdb6f2be40
+#   on-chain  sha256 6ed4ce0f0b362a8ce08a61fd4002b44faf2eba21a5650917551809f177f00e1a (15764 chars)
+#   ../contracts/auditscope_studio_next.py sha256 6ed4ce0f0b362a8ce08a61fd4002b44faf2eba21a5650917551809f177f00e1a (15764 chars)
+#   fail-closed reference check present on-chain: true
+# IDENTICAL
+```
+
+`shasum -a 256 contracts/auditscope_studio_next.py` gives the same hash locally, and `npx tsx verify_code.ts <old address>` prints `DIFFERENT` for any superseded Studio Next deployment above. The consumer contract ListingGate ([`0xc9049928572eB42370672fb88989482268bb604d`](https://explorer-studio-dev.genlayer.com/address/0xc9049928572eB42370672fb88989482268bb604d)) is also byte-identical to [`contracts/listing_gate_studio_next.py`](contracts/listing_gate_studio_next.py) (SHA-256 `025660c3f16ba5cd53ea926211f97a4f7e32339055af92898cccae77861e91ff`), and its deploy transaction binds it to `0x3B3c8317…` - the corrected AuditScope.
 
 ## Steward review: MATCH never actually verified the reference against the source
 
@@ -143,7 +167,9 @@ The LLM correctly extracted `"b9f2e71"` and the validator confirmed it is genuin
 - `request_listing("MATCH1")` - tx `0x0a9045b76c8ec0413c355a12559b5968a6c3ed8dcf8884d1cec21b8bd183b7dc`: succeeded. `is_listed("MATCH1")` reads `true`.
 - `request_listing("MISMATCH1")` - tx `0x6cc20646b7a57155e79d404c58bf2f72a11b6d36f05030a72db1b280ca4325b3`: **correctly rejected** - `FINISHED_WITH_ERROR`, the contract's own `assert covered` firing because AuditScope's real, consensus-derived `is_covered("MISMATCH1")` is `false`. `is_listed("MISMATCH1")` reads `false`. Kept in this record rather than only showing the success case, since a gate that only demonstrates the positive path hasn't actually proven it gates anything.
 
-## Historical: Bradbury deployment (partial - see below)
+## Historical: Bradbury deployment (superseded - runs the pre-fix source)
+
+**Do not use this deployment to evaluate the contract.** It was deployed before the steward-flagged fix and does not contain the fail-closed reference check (its on-chain code hash is in the table under "Verify the deployed source" above). It is kept only as a record of the original cross-network test.
 
 - **Address:** [`0xF612bf82192762adc4631c888F7639d9e728079E`](https://explorer-bradbury.genlayer.com/address/0xF612bf82192762adc4631c888F7639d9e728079E)
 - **Deploy tx:** `0xe27d3120b366b756c70077866efdb9143c4dfd257a3555600648adc523ea6d86`

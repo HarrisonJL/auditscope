@@ -2,7 +2,7 @@
 
 A reusable audit-coverage attestor for [GenLayer](https://genlayer.com): register a deployed contract's audit report alongside its audited and currently-deployed source, and any wallet can trigger a real validator committee to independently verify whether the audit report's claims are genuinely grounded in its own text, whether that reference actually identifies the specific source being compared, and whether what was actually audited still matches what's actually deployed - `MATCH` / `MISMATCH` / `UNVERIFIED`, not a badge nobody re-checks.
 
-**Live on GenLayer Studio Next. Testnet only.** (Also live, separately, on Bradbury - see [`CONTRACT.md`](CONTRACT.md).)
+**Live on GenLayer Studio Next at [`0x3B3c8317f24e394A24520D5f382E95bdb6f2be40`](https://explorer-studio-dev.genlayer.com/address/0x3B3c8317f24e394A24520D5f382E95bdb6f2be40). Testnet only.** That is the deployment to review: its on-chain code is byte-identical to [`contracts/auditscope_studio_next.py`](contracts/auditscope_studio_next.py) - the corrected source with the fail-closed reference check (SHA-256 `6ed4ce0f…00e1a`; check it yourself with `cd studio-next && npx tsx verify_code.ts`). The two earlier Studio Next deployments and the Bradbury deployment run the **pre-fix** source and are superseded - see ["Verify the deployed source"](CONTRACT.md#verify-the-deployed-source-matches-this-repo) in CONTRACT.md.
 
 ## The problem this solves
 

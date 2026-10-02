@@ -6,7 +6,8 @@
   "type": "commonjs",
   "scripts": {
     "check-schema": "tsx check_schema.ts",
-    "deploy": "tsx deploy.ts"
+    "deploy": "tsx deploy.ts",
+    "verify-code": "tsx verify_code.ts"
   },
   "dependencies": {
     "dotenv": "^18.0.3",
