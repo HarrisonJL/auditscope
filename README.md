@@ -63,8 +63,8 @@ This contract exists in two source files: [`contracts/auditscope.py`](contracts/
 (Bradbury, GenVM v0.2.11, test-covered by the suite below) and a Studio Next variant (a
 newer GenVM generation - the primary live deployment, ported using the mechanical process
 documented in the sibling [SolvencyOracle](https://github.com/HarrisonJL/solvency-oracle)
-and [QuoteKeeper](https://github.com/HarrisonJL/quotekeeper) projects' `studio-next/README.md`
-files, including the `gl.get_contract_at` -> `gl.contract.get_at` move QuoteKeeper's port
+project's `studio-next/README.md` and [QuoteKeeper](https://github.com/HarrisonJL/quotekeeper)'s
+[`CONTRACT.md`](https://github.com/HarrisonJL/quotekeeper/blob/main/CONTRACT.md) ("Porting to Studio Next"), including the `gl.get_contract_at` -> `gl.contract.get_at` move QuoteKeeper's port
 already found for [`contracts/listing_gate.py`](contracts/listing_gate.py)).
 
 Direct Mode cannot simulate cross-contract calls without a "glsim" hook this project

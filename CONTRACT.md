@@ -30,7 +30,7 @@ cd studio-next && npm ci && npx tsx verify_code.ts
 # IDENTICAL
 ```
 
-`shasum -a 256 contracts/auditscope_studio_next.py` gives the same hash locally, and `npx tsx verify_code.ts <old address>` prints `DIFFERENT` for any superseded Studio Next deployment above. The consumer contract ListingGate ([`0xc9049928572eB42370672fb88989482268bb604d`](https://explorer-studio-dev.genlayer.com/address/0xc9049928572eB42370672fb88989482268bb604d)) is also byte-identical to [`contracts/listing_gate_studio_next.py`](contracts/listing_gate_studio_next.py) (SHA-256 `025660c3f16ba5cd53ea926211f97a4f7e32339055af92898cccae77861e91ff`), and its deploy transaction binds it to `0x3B3c8317…` - the corrected AuditScope.
+`python3 scripts/port_to_studio_next.py` regenerates both `contracts/*_studio_next.py` files from the tested sources (five import/decorator/base-class/message substitutions) and exits non-zero if either committed port differs; both are `IDENTICAL`. `shasum -a 256 contracts/auditscope_studio_next.py` gives the same hash locally, and `npx tsx verify_code.ts <old address>` prints `DIFFERENT` for any superseded Studio Next deployment above. The consumer contract ListingGate ([`0xc9049928572eB42370672fb88989482268bb604d`](https://explorer-studio-dev.genlayer.com/address/0xc9049928572eB42370672fb88989482268bb604d)) is also byte-identical to [`contracts/listing_gate_studio_next.py`](contracts/listing_gate_studio_next.py) (SHA-256 `025660c3f16ba5cd53ea926211f97a4f7e32339055af92898cccae77861e91ff`), and its deploy transaction binds it to `0x3B3c8317…` - the corrected AuditScope.
 
 ## Steward review: MATCH never actually verified the reference against the source
 
